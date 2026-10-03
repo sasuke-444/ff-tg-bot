@@ -1,47 +1,84 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request
 import requests, os
 
 app = Flask(__name__)
 BOT_TOKEN = "8058158982:AAF-Gt-iIjbLKaqkW-7F4Q3hdE0tz3geEng"
-LIKE_API = "https://free-fire-like-api-theta-azure.vercel.app"
+API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-def send_message(chat_id, text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"})
+# Your Like API - you can add more APIs here
+LIKE_APIS = [
+    "https://ff-like-api.vercel.app/like?uid={uid}&server={server}",
+    "https://free-fire-like-api.vercel.app/like?uid={uid}&server={server}",
+]
 
-@app.route('/api/webhook', methods=['POST','GET'])
-def webhook():
-    if request.method == 'GET':
-        return "Bot Running!"
-    data = request.get_json()
-    if not data or 'message' not in data:
-        return jsonify({"ok": True})
-    message = data['message']
-    chat_id = message['chat']['id']
-    text = message.get('text','')
-    if text.startswith('/start'):
-        send_message(chat_id, "🔥 *Free Fire 200 Likes Bot* 🔥\n\nUse:\n`/like <uid> <server>`\n\nExample:\n`/like 123456789 bd`\n\nServers: bd, ind, sg, br, me, pk")
-    elif text.startswith('/like'):
-        try:
-            parts = text.split()
-            if len(parts) < 2:
-                send_message(chat_id, "❌ Use: `/like 123456789 bd`")
-                return jsonify({"ok": True})
-            uid = parts[1]
-            server = parts[2] if len(parts) > 2 else "bd"
-            send_message(chat_id, f"⏳ Sending 200 Likes to `{uid}` ({server})...")
-            r = requests.get(f"{LIKE_API}/like", params={"uid": uid, "server_name": server}, timeout=30)
-            result = r.json()
-            if r.status_code == 200:
-                send_message(chat_id, f"✅ *Success!*\nUID: `{uid}`\nServer: {server}\n\n🔥 Likes Sent!")
-            else:
-                send_message(chat_id, f"❌ Failed: {result}")
-        except Exception as e:
-            send_message(chat_id, f"❌ Error: {str(e)}")
-    else:
-        send_message(chat_id, "Use `/like <uid> <server>`")
-    return jsonify({"ok": True})
+def send_msg(chat_id, text):
+    try:
+        requests.post(f"{API_URL}/sendMessage", json={"chat_id": chat_id, "text": text}, timeout=10)
+    except: pass
 
-@app.route('/', methods=['GET'])
+@app.route("/")
 def home():
-    return "Telegram Like Bot Running!"
+    return "Bot Running!"
+
+@app.route("/api/webhook", methods=["POST", "GET"])
+def webhook():
+    if request.method == "GET":
+        return "Bot Running!"
+    
+    data = request.get_json(force=True, silent=True)
+    if not data: return "ok"
+    
+    msg = data.get("message") or data.get("edited_message")
+    if not msg: return "ok"
+    
+    chat_id = msg["chat"]["id"]
+    text = msg.get("text", "").strip()
+    
+    if not text: return "ok"
+    
+    low = text.lower()
+    
+    if low.startswith("/start"):
+        send_msg(chat_id, "🔥 FF Like Bot LIVE 24/7!\n\nCommands:\n/like <UID> ind - Indian server\n/like <UID> bd - BD server\n/like <UID> sg - SG server\n\nExample:\n/like 6832457437 ind\n\nOwner: @sasuke_444")
+        return "ok"
+    
+    if low.startswith("/like"):
+        parts = text.split()
+        # Support: /like 6832457437 ind  OR /like ind 6832457437
+        uid = None
+        server = "ind"
+        
+        for p in parts[1:]:
+            if p.isdigit() and len(p) >= 6:
+                uid = p
+            elif p.lower() in ["ind","bd","sg","br","id","vn","th","me","pk","us"]:
+                server = p.lower()
+        
+        if not uid:
+            send_msg(chat_id, "❌ Wrong format!\nUse: /like <UID> <server>\nExample: /like 6832457437 ind")
+            return "ok"
+        
+        send_msg(chat_id, f"⏳ Sending likes to {uid} ({server.upper()})... Please wait 10 sec...")
+        
+        success = False
+        for api_template in LIKE_APIS:
+            try:
+                url = api_template.format(uid=uid, server=server)
+                r = requests.get(url, timeout=15)
+                j = r.json() if r.headers.get("content-type","").startswith("application/json") else {}
+                if r.status_code == 200 and ("success" in str(r.text).lower() or "like" in str(r.text).lower() or j.get("likes") or j.get("status") == "success"):
+                    success = True
+                    send_msg(chat_id, f"✅ Success! Likes sent to {uid}!\nServer: {server.upper()}\n\nCheck in game now! ❤️")
+                    break
+            except Exception as e:
+                continue
+        
+        if not success:
+            send_msg(chat_id, f"❌ All APIs down or UID {uid} reached daily limit. Try tomorrow morning 6 AM IST — that's when limit resets.")
+        
+        return "ok"
+    
+    return "ok"
+
+# For Vercel
+# app = app
